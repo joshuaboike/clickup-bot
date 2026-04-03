@@ -279,7 +279,7 @@ app.get("/", (req, res) => {
 });
 
 // ── Telegram webhook ──────────────────────────────────────────────────────────
-app.post("/webhook", async (req, res) => {
+app.post("/webhook", (req, res) => {
   res.sendStatus(200);
   const message = req.body?.message;
   if (message) {
@@ -294,11 +294,15 @@ app.get("/trigger-digest", async (req, res) => {
 });
 
 // ── Startup ───────────────────────────────────────────────────────────────────
-const PORT = process.env.PORT || 3000;
+const parsedPort = parseInt(process.env.PORT, 10);
+const PORT = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 3000;
 const HOST = process.env.LISTEN_HOST || "0.0.0.0";
 
 app.listen(PORT, HOST, async () => {
   console.log(`✅ Server running on ${HOST}:${PORT} (build ${BUILD})`);
+  console.log(
+    "If Railway/Telegram returns 502 on /webhook: Networking → public port MUST match the number above (often Railway sets $PORT; it is not always 3000)."
+  );
 
   try {
     if (process.env.WEBHOOK_URL) {
