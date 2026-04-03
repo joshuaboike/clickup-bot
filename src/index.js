@@ -289,16 +289,27 @@ app.get("/trigger-digest", async (req, res) => {
 
 // ── Startup ───────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
+const HOST = process.env.LISTEN_HOST || "0.0.0.0";
 
-app.listen(PORT, async () => {
-  console.log(`✅ Server running on port ${PORT} (build ${BUILD})`);
+app.listen(PORT, HOST, async () => {
+  console.log(`✅ Server running on ${HOST}:${PORT} (build ${BUILD})`);
 
-  if (process.env.WEBHOOK_URL) {
-    await registerWebhook();
-  } else {
-    await deleteWebhook();
-    console.log("📥 WEBHOOK_URL unset — using Telegram long polling (local-friendly).");
-    startLongPolling();
+  try {
+    if (process.env.WEBHOOK_URL) {
+      await registerWebhook();
+    } else {
+      await deleteWebhook();
+      console.log("📥 WEBHOOK_URL unset — using Telegram long polling (local-friendly).");
+      startLongPolling();
+    }
+  } catch (e) {
+    console.error(
+      "Telegram webhook setup failed:",
+      e.response?.data || e.message
+    );
+    console.error(
+      "Fix TELEGRAM_BOT_TOKEN (and WEBHOOK_URL for cloud). Bot HTTP server is still up."
+    );
   }
 
   try {
