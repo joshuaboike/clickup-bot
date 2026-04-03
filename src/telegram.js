@@ -53,11 +53,23 @@ async function sendMessageChunks(text, parseMode = "Markdown", chunkSize = 3800)
  * Register your server's webhook URL with Telegram.
  * Call once on startup. Telegram will POST every incoming message to /webhook.
  */
+function normalizeWebhookBase(raw) {
+  let base = String(raw || "").trim().replace(/\/+$/, "");
+  if (!base) return "";
+  if (!/^https:\/\//i.test(base)) {
+    base = `https://${base.replace(/^\/+/, "")}`;
+  }
+  return base;
+}
+
 async function registerWebhook() {
-  const base = String(process.env.WEBHOOK_URL || "").replace(/\/+$/, "");
+  const base = normalizeWebhookBase(process.env.WEBHOOK_URL);
+  if (!base) {
+    throw new Error("WEBHOOK_URL is empty after trim");
+  }
   const url = `${base}/webhook`;
   const res = await axios.post(`${BASE()}/setWebhook`, { url });
-  console.log("Telegram webhook registered:", res.data);
+  console.log("Telegram setWebhook URL:", url, res.data);
 }
 
 /** Clear webhook so getUpdates (long polling) works — webhook and polling are mutually exclusive. */
