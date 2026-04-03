@@ -149,7 +149,7 @@ async function handleTelegramMessage(message) {
         `🔹 *Meeting* (all in *one message*, line 5+ = transcript)\n` +
         `\`\`\`\nmeeting\nSnak King\n03.27.26\nmeeting with Jen and Mark\n<first line of transcript>\n\`\`\`\n\n` +
         `Long transcripts don’t fit one bubble — send the 4-line header first (type → location → date → title), then paste the rest in *more messages*, then send:\n` +
-        `\`/done\` — process  ·  \`/cancel\` — discard\n\n` +
+        `\`/done\` — process (waits a few seconds so late chunks can arrive; send \`/done\` again to run immediately)  ·  \`/cancel\` — discard\n\n` +
         `If potential duplicate tasks are found, I will pause and ask one-by-one what to keep (reply 1/2/3/4).\n\n` +
         `*Sandbox (destructive):*\n` +
         `\`/sandbox_delete Snak King list delete\` — folder first (matches your ClickUp folder)\n` +
@@ -183,19 +183,54 @@ async function handleTelegramMessage(message) {
   if (consumedByDuplicateReview) return;
 
   if (text === "/done") {
-    const buf = meetingBuffer.take(chatId);
-    if (!buf) {
+    const flushMeeting = (payload) => {
+      const transcript = payload.parts.join("\n\n").trim();
+      if (!transcript) {
+        sendMessage(
+          `❌ No transcript text was collected. Start again with the 4-line header.`
+        ).catch((e) => console.error(e));
+        return;
+      }
+      handleMeeting(
+        payload.spaceName,
+        payload.dateStr,
+        payload.itemName,
+        transcript,
+        chatId
+      );
+    };
+
+    const rawDebounce = parseInt(process.env.MEETING_DONE_DEBOUNCE_MS, 10);
+    const debounceMs = Number.isFinite(rawDebounce)
+      ? Math.max(0, Math.min(rawDebounce, 30000))
+      : 3500;
+
+    if (debounceMs === 0) {
+      const buf = meetingBuffer.take(chatId);
+      if (!buf) {
+        await sendMessage(
+          `No meeting transcript in progress. Start with a 4-line header:\n\`meeting\` → location → date → title`
+        );
+        return;
+      }
+      flushMeeting(buf);
+      return;
+    }
+
+    const result = meetingBuffer.requestDone(chatId, debounceMs, flushMeeting);
+    if (!result.ok) {
       await sendMessage(
         `No meeting transcript in progress. Start with a 4-line header:\n\`meeting\` → location → date → title`
       );
       return;
     }
-    const transcript = buf.parts.join("\n\n").trim();
-    if (!transcript) {
-      await sendMessage(`❌ No transcript text was collected. Start again with the 4-line header.`);
-      return;
+    if (result.scheduled) {
+      const sec = Math.max(1, Math.round(debounceMs / 1000));
+      await sendMessage(
+        `Locked — running in ~${sec}s so any **trailing paste chunks** (Telegram often delivers them late) can arrive.\n\n` +
+          `Send **/done** again to run **immediately**.`
+      );
     }
-    handleMeeting(buf.spaceName, buf.dateStr, buf.itemName, transcript, chatId);
     return;
   }
 

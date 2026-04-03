@@ -152,6 +152,13 @@ async function handleMeeting(spaceName, dateStr, itemName, transcript, chatId) {
   }
 }
 
+function looksLikeStrayTranscript(text) {
+  const t = String(text || "").trim();
+  if (t.length >= 500) return true;
+  const newlines = (t.match(/\n/g) || []).length;
+  return t.length >= 120 && newlines >= 2;
+}
+
 async function handleDuplicateDecision(chatId, text) {
   const session = duplicateReview.get(chatId);
   if (!session) return false;
@@ -159,11 +166,20 @@ async function handleDuplicateDecision(chatId, text) {
 
   const decision = duplicateReview.parseDecision(text);
   if (!decision) {
-    await sendMessage(
-      `I didn't catch that. Reply with 1, 2, 3, or 4.\n` +
-        `1 keep existing · 2 keep new · 3 keep both · 4 skip both`,
-      null
-    );
+    if (looksLikeStrayTranscript(text)) {
+      await sendMessage(
+        `That looks like transcript that arrived after processing started (Telegram often delivers big pastes out of order).\n\n` +
+          `For the duplicate question above, reply 1, 2, 3, or 4 only.\n` +
+          `Send /cancel to stop duplicate review.`,
+        null
+      );
+    } else {
+      await sendMessage(
+        `I didn't catch that. Reply with 1, 2, 3, or 4.\n` +
+          `1 keep existing · 2 keep new · 3 keep both · 4 skip both`,
+        null
+      );
+    }
     return true;
   }
 
