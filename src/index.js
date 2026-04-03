@@ -70,8 +70,14 @@ function parseSandboxDeleteCommand(text) {
  * Ignores chats other than TELEGRAM_CHAT_ID when that env is set.
  */
 async function handleTelegramMessage(message) {
-  const allowed = String(process.env.TELEGRAM_CHAT_ID || "");
-  if (allowed && String(message.chat?.id) !== allowed) return;
+  const allowed = String(process.env.TELEGRAM_CHAT_ID || "").trim();
+  const fromChat = message.chat?.id != null ? String(message.chat.id) : "";
+  if (allowed && fromChat !== allowed) {
+    console.warn(
+      `[telegram] ignored message (chat ${fromChat} !== TELEGRAM_CHAT_ID)`
+    );
+    return;
+  }
 
   if (!message.text) return;
   let text = message.text

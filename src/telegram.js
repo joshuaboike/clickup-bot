@@ -14,7 +14,7 @@ const BASE = () =>
 async function sendMessage(text, parseMode = "Markdown") {
   try {
     const body = {
-      chat_id: process.env.TELEGRAM_CHAT_ID,
+      chat_id: String(process.env.TELEGRAM_CHAT_ID || "").trim(),
       text,
       disable_web_page_preview: true,
     };
