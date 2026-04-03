@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Telegram bot that manages ClickUp tasks and docs via natural language",
   "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js"

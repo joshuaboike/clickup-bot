@@ -7,25 +7,26 @@ const { sendMessage } = require("../telegram");
 
 /**
  * @param {string} spaceName  - e.g. "Aesop Auto Parts"
- * @param {string} taskName   - e.g. "Follow up with Tom on data access"
- * @param {string} description - optional task body
+ * @param {string} dateStr    - from message line 3, prefixed onto the ClickUp task title
+ * @param {string} taskTitle  - line 4, the human title without date
+ * @param {string} description - optional task body (line 5+)
  */
-async function handleTask(spaceName, taskName, description = "") {
-  await sendMessage(`⏳ Creating task: *${taskName}*...`);
+async function handleTask(spaceName, dateStr, taskTitle, description = "") {
+  const fullTitle = `${dateStr} ${taskTitle}`;
 
   try {
-    const space = await clickup.findSpaceByName(spaceName);
-    const list = await clickup.getDefaultListForSpace(space.id);
+    const location = await clickup.findSpaceByName(spaceName);
+    const list = await clickup.getDefaultListForSpace(location);
 
     const task = await clickup.createTask(
       list.id,
-      taskName,
+      fullTitle,
       description,
-      [process.env.CLICKUP_JOSH_USER_ID] // always assign to Josh for manual tasks
+      [process.env.CLICKUP_JOSH_USER_ID]
     );
 
     await sendMessage(
-      `✅ Task created!\n\n*${taskName}*\n📋 Space: ${spaceName}\n🔗 [Open in ClickUp](${task.url})`
+      `✅ Task created!\n\n*${fullTitle}*\n📋 Space: ${spaceName}\n🔗 [Open in ClickUp](${task.url})`
     );
   } catch (err) {
     console.error("Task handler error:", err.message);

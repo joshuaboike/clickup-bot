@@ -52,15 +52,35 @@ npm run dev
 You won't have a public URL yet for the Telegram webhook — that's fine for local testing.
 Test the ClickUp + Claude integration by calling handler functions directly.
 
-### 6. Deploy to Railway
+### 6. Deploy to the cloud (Railway)
 
-1. Push this repo to GitHub
-2. Go to https://railway.app → New Project → Deploy from GitHub repo
-3. Add all env variables in Railway's Variables tab (copy from your .env)
-4. Deploy — Railway gives you a URL like `https://ddc-clickup-bot.up.railway.app`
-5. Copy that URL into `WEBHOOK_URL` in Railway's variables
-6. Redeploy (or it'll auto-redeploy)
-7. Telegram will now route messages to your bot
+The bot needs **one** long-lived process and a **public HTTPS** URL so Telegram can POST to `/webhook`. Easiest path here is **Railway**; you can also run the included **`Dockerfile`** on Fly.io, Cloud Run, etc.
+
+**Railway (GitHub)**
+
+1. Push this repo to GitHub.
+2. [railway.app](https://railway.app) → **New Project** → **Deploy from GitHub** → pick the repo.
+3. **Variables**: add everything from your `.env`. You may leave `WEBHOOK_URL` empty on the first deploy.
+4. Deploy, then **Settings → Networking → Generate domain** and copy the HTTPS origin.
+5. Set **`WEBHOOK_URL`** to that URL (e.g. `https://your-service.up.railway.app`; trailing slash is OK). Redeploy if needed; on startup the app registers `setWebhook` → `{WEBHOOK_URL}/webhook`.
+6. Logs should show “Telegram webhook registered”; `GET /` should return JSON.
+
+**Docker**
+
+```bash
+docker build -t clickup-bot .
+docker run --env-file .env -p 3000:3000 clickup-bot
+```
+
+Use the same env vars as `.env.example`. Platforms usually set `PORT` automatically.
+
+| Variable | Cloud |
+|----------|--------|
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Required |
+| `CLICKUP_*`, `ANTHROPIC_API_KEY` | Required |
+| `WEBHOOK_URL` | **Required** — public HTTPS base URL |
+| `PORT` | Leave unset / use platform default |
+| `TIMEZONE` | Digest schedule (cron) |
 
 ---
 

@@ -47,20 +47,15 @@ async function sendDigest(label) {
 }
 
 async function getSpacesWithTasks() {
-  const allSpaces = await clickup.getSpaces();
   const result = [];
 
   for (const spaceName of DIGEST_SPACES) {
-    const space = allSpaces.find(
-      (s) => s.name.toLowerCase() === spaceName.toLowerCase()
-    );
-    if (!space) continue;
-
     try {
-      const tasks = await clickup.getOpenTasksForSpace(space.id);
-      result.push({ name: space.name, tasks });
+      const location = await clickup.findSpaceByName(spaceName);
+      const tasks = await clickup.getOpenTasksForLocation(location);
+      result.push({ name: spaceName, tasks });
     } catch (err) {
-      console.warn(`Could not fetch tasks for space ${spaceName}:`, err.message);
+      console.warn(`Could not fetch tasks for "${spaceName}":`, err.message);
     }
   }
 
