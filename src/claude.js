@@ -12,6 +12,76 @@ function anthropicModel() {
   return process.env.ANTHROPIC_MODEL || "claude-opus-4-6";
 }
 
+const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
+const ANTHROPIC_MAX_RETRIES = parseInt(process.env.ANTHROPIC_MAX_RETRIES, 10) || 5;
+const ANTHROPIC_BASE_DELAY_MS = 1000;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function isRetryableAnthropicError(err) {
+  if (!err.response) {
+    // Network / timeout / connection reset — retry.
+    const code = err.code;
+    return (
+      code === "ECONNRESET" ||
+      code === "ETIMEDOUT" ||
+      code === "ECONNABORTED" ||
+      code === "EAI_AGAIN" ||
+      code === "ENOTFOUND"
+    );
+  }
+  const status = err.response.status;
+  // 429 rate-limited, 529 overloaded, 500/502/503/504 transient server errors.
+  return status === 429 || status === 529 || (status >= 500 && status <= 599);
+}
+
+/**
+ * POST to Anthropic Messages API with exponential backoff on 429/529/5xx
+ * and transient network errors. Honors `retry-after` header when present.
+ */
+async function anthropicPost(body) {
+  const headers = {
+    "x-api-key": process.env.ANTHROPIC_API_KEY,
+    "anthropic-version": "2023-06-01",
+    "Content-Type": "application/json",
+  };
+
+  let lastErr;
+  for (let attempt = 0; attempt <= ANTHROPIC_MAX_RETRIES; attempt++) {
+    try {
+      return await axios.post(ANTHROPIC_URL, body, { headers });
+    } catch (err) {
+      lastErr = err;
+      if (attempt === ANTHROPIC_MAX_RETRIES || !isRetryableAnthropicError(err)) {
+        throw err;
+      }
+
+      // Prefer server-suggested delay if present.
+      let waitMs;
+      const retryAfter = err.response?.headers?.["retry-after"];
+      if (retryAfter) {
+        const asNum = Number(retryAfter);
+        waitMs = Number.isFinite(asNum)
+          ? asNum * 1000
+          : Math.max(0, new Date(retryAfter).getTime() - Date.now());
+      }
+      if (!waitMs || !Number.isFinite(waitMs) || waitMs <= 0) {
+        // Exponential backoff with jitter: 1s, 2s, 4s, 8s, 16s (+/- 25%).
+        const base = ANTHROPIC_BASE_DELAY_MS * 2 ** attempt;
+        const jitter = base * (Math.random() * 0.5 - 0.25);
+        waitMs = Math.min(30_000, Math.round(base + jitter));
+      }
+
+      const status = err.response?.status || err.code || "network";
+      console.warn(
+        `[anthropic] ${status} on attempt ${attempt + 1}/${ANTHROPIC_MAX_RETRIES + 1}, retrying in ${waitMs}ms`
+      );
+      await sleep(waitMs);
+    }
+  }
+  throw lastErr;
+}
+
 /**
  * Very long bodies can still hit HTTP/proxy limits; cap analysis input only.
  * Full transcript is always stored in the ClickUp doc. Override via .env.
@@ -40,8 +110,7 @@ async function analyzeMeeting(transcript) {
 
   let response;
   try {
-    response = await axios.post(
-      "https://api.anthropic.com/v1/messages",
+    response = await anthropicPost(
       {
         model: anthropicModel(),
         max_tokens: 8192,
@@ -68,13 +137,6 @@ Rules for todos:
             content: `Please analyze this meeting transcript and extract all key information and action items:\n\n${textForClaude}`,
           },
         ],
-      },
-      {
-        headers: {
-          "x-api-key": process.env.ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-          "Content-Type": "application/json",
-        },
       }
     );
   } catch (err) {
@@ -113,8 +175,7 @@ async function findPotentialTaskDuplicates(existingTasks, newTasks) {
 
   let response;
   try {
-    response = await axios.post(
-      "https://api.anthropic.com/v1/messages",
+    response = await anthropicPost(
       {
         model: anthropicModel(),
         max_tokens: 4000,
@@ -152,13 +213,6 @@ Rules:
             ),
           },
         ],
-      },
-      {
-        headers: {
-          "x-api-key": process.env.ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-          "Content-Type": "application/json",
-        },
       }
     );
   } catch (err) {
@@ -200,8 +254,7 @@ Rules:
 async function prioritizeTodayFocus(payload) {
   let response;
   try {
-    response = await axios.post(
-      "https://api.anthropic.com/v1/messages",
+    response = await anthropicPost(
       {
         model: anthropicModel(),
         max_tokens: 6000,
@@ -239,13 +292,6 @@ Rules:
             content: JSON.stringify(payload),
           },
         ],
-      },
-      {
-        headers: {
-          "x-api-key": process.env.ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-          "Content-Type": "application/json",
-        },
       }
     );
   } catch (err) {
@@ -277,8 +323,7 @@ Rules:
 async function answerAskAboutTasks(payload) {
   let response;
   try {
-    response = await axios.post(
-      "https://api.anthropic.com/v1/messages",
+    response = await anthropicPost(
       {
         model: anthropicModel(),
         max_tokens: 6000,
@@ -297,13 +342,6 @@ Rules:
             content: JSON.stringify(payload),
           },
         ],
-      },
-      {
-        headers: {
-          "x-api-key": process.env.ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-          "Content-Type": "application/json",
-        },
       }
     );
   } catch (err) {
@@ -323,8 +361,7 @@ Rules:
 async function answerUnifiedQuery(payload) {
   let response;
   try {
-    response = await axios.post(
-      "https://api.anthropic.com/v1/messages",
+    response = await anthropicPost(
       {
         model: anthropicModel(),
         max_tokens: 12_000,
@@ -342,13 +379,6 @@ Rules:
             content: JSON.stringify(payload),
           },
         ],
-      },
-      {
-        headers: {
-          "x-api-key": process.env.ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-          "Content-Type": "application/json",
-        },
       }
     );
   } catch (err) {
@@ -374,8 +404,7 @@ function maxComposeSourceChars() {
 async function pickSourceDocForCompose({ userRequest, candidates }) {
   let response;
   try {
-    response = await axios.post(
-      "https://api.anthropic.com/v1/messages",
+    response = await anthropicPost(
       {
         model: anthropicModel(),
         max_tokens: 2000,
@@ -398,13 +427,6 @@ Rules:
             content: JSON.stringify({ userRequest, candidates }),
           },
         ],
-      },
-      {
-        headers: {
-          "x-api-key": process.env.ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-          "Content-Type": "application/json",
-        },
       }
     );
   } catch (err) {
@@ -439,8 +461,7 @@ async function composeNewClickUpDoc({ userRequest, sourceName, sourceMarkdown })
 
   let response;
   try {
-    response = await axios.post(
-      "https://api.anthropic.com/v1/messages",
+    response = await anthropicPost(
       {
         model: anthropicModel(),
         max_tokens: 16_384,
@@ -467,13 +488,6 @@ Rules:
             }),
           },
         ],
-      },
-      {
-        headers: {
-          "x-api-key": process.env.ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-          "Content-Type": "application/json",
-        },
       }
     );
   } catch (err) {
