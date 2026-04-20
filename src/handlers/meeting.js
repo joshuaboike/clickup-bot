@@ -11,6 +11,17 @@ const claude = require("../claude");
 const { formatAxiosError } = require("../httpErrors");
 const { sendMessage } = require("../telegram");
 const duplicateReview = require("../duplicateReview");
+const apsCatalogue = require("../apsCatalogue");
+
+// APS transcripts get additionally archived to GitHub + catalogued.
+// Keyed off the spaceName arg to handleMeeting (line 2 of the Telegram paste).
+function isAPS(spaceName) {
+  return String(spaceName || "").trim().toLowerCase() === "aps";
+}
+
+// Track pending APS catalogue contexts so the duplicate-review finish path
+// can kick them off when ClickUp flow completes async.
+const pendingAPSContexts = new Map(); // chatId → { dateStr, itemName, transcript, clickupDocId, clickupDocUrl }
 
 function normalizeTodo(todo) {
   const person = String(todo?.person || "Josh").trim() || "Josh";
@@ -122,6 +133,16 @@ async function handleMeeting(spaceName, dateStr, itemName, transcript, chatId) {
         newCandidates,
         pairs,
       });
+      // Park APS context for post-duplicate-review catalogue kickoff
+      if (isAPS(spaceName)) {
+        pendingAPSContexts.set(chatId, {
+          dateStr,
+          itemName,
+          transcript,
+          clickupDocId: doc.id,
+          clickupDocUrl: doc.url,
+        });
+      }
       await sendMessage(
         `${pairs.length} pairs of potential duplicates found. Beginning review one by one.`,
         null
@@ -141,6 +162,23 @@ async function handleMeeting(spaceName, dateStr, itemName, transcript, chatId) {
       null
     );
     if (!ok) console.error("Telegram: failed to send completion message");
+
+    // ── Step 7 (APS only): archive + catalogue to GitHub ────────────────────
+    if (isAPS(spaceName)) {
+      try {
+        await apsCatalogue.runCatalogue({
+          dateStr,
+          itemName,
+          transcript,
+          chatId,
+          clickupDocId: doc.id,
+          clickupDocUrl: doc.url,
+        });
+      } catch (err) {
+        console.error("apsCatalogue error:", err.message);
+        await sendMessage(`⚠️ APS catalogue step failed: ${err.message}`, null);
+      }
+    }
   } catch (err) {
     let msg = err.message || String(err);
     if (axios.isAxiosError(err)) {
@@ -219,6 +257,18 @@ async function handleDuplicateDecision(chatId, text) {
     `✅ Duplicate review complete. Created ${created.length} tasks; deleted ${deletedCount} replaced existing tasks.`,
     null
   );
+
+  // If an APS catalogue was parked waiting for duplicate review to finish, run it now.
+  const apsCtx = pendingAPSContexts.get(chatId);
+  if (apsCtx) {
+    pendingAPSContexts.delete(chatId);
+    try {
+      await apsCatalogue.runCatalogue({ ...apsCtx, chatId });
+    } catch (err) {
+      console.error("apsCatalogue error (post-dup-review):", err.message);
+      await sendMessage(`⚠️ APS catalogue step failed: ${err.message}`, null);
+    }
+  }
   return true;
 }
 
@@ -228,4 +278,10 @@ function cancelDuplicateReview(chatId) {
   return true;
 }
 
-module.exports = { handleMeeting, handleDuplicateDecision, cancelDuplicateReview };
+module.exports = {
+  handleMeeting,
+  handleDuplicateDecision,
+  cancelDuplicateReview,
+  handleAPSClarificationReply: apsCatalogue.handleClarificationReply,
+  cancelAPSClarification: apsCatalogue.cancelClarification,
+};

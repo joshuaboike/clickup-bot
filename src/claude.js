@@ -511,9 +511,133 @@ Rules:
   }
 }
 
+/**
+ * Catalogue an APS meeting transcript against the existing entity graph.
+ * Extracts structured frontmatter fields (attendees, people, workstreams, systems,
+ * commitments, related_docs) using the canonical IDs from the entity index.
+ *
+ * @param {string} transcript — raw transcript body
+ * @param {Array} entities — [{id, type, aliases: [], context: string|null}]
+ * @returns Object with:
+ *   attendees, people, workstreams, systems, commitments, related_docs,
+ *   new_entities: {people:[], systems:[]},
+ *   clarifications_needed: [{question, options}],
+ *   summary: short one-line
+ */
+async function catalogueTranscript(transcript, entities) {
+  const cap = maxTranscriptCharsForAnalysis();
+  let body = transcript.length > cap
+    ? transcript.slice(0, cap) + "\n\n[Transcript truncated for cataloguing.]"
+    : transcript;
+
+  // Group entities by type for a compact prompt
+  const byType = { person: [], workstream: [], system: [], glossary: [] };
+  for (const e of entities || []) {
+    const bucket = byType[e.type] || byType.person;
+    const aliasSuffix = (e.aliases && e.aliases.length)
+      ? ` (aka ${e.aliases.slice(0, 4).join(", ")})`
+      : "";
+    bucket.push(`- ${e.id}${aliasSuffix}`);
+  }
+
+  const system = `You catalogue APS meeting transcripts for a structured knowledge system (aps-master repo).
+
+Your job: extract frontmatter fields using CANONICAL ENTITY IDs below. Output raw JSON only — no preamble, no markdown fences, no prose.
+
+# Known entity IDs (use these exact ids when matching)
+
+## People
+${byType.person.slice(0, 200).join("\n") || "- (none yet)"}
+
+## Workstreams
+${byType.workstream.join("\n") || "- (none yet)"}
+
+## Systems
+${byType.system.join("\n") || "- (none yet)"}
+
+# Rules
+
+1. \`attendees\` = people EXPLICITLY NAMED AS PRESENT in the transcript body. Do not infer from role or workstream overlap.
+2. \`people\` = anyone mentioned anywhere (superset of attendees).
+3. When a name matches a canonical ID, use that exact ID (kebab-case). If the transcript uses a variant (e.g., "Jack" for "jak-myers", "Cheyenne" for "xiaoyan-weng"), map to the canonical ID.
+4. If a person/system is clearly NEW (not in the list and not a known alias), add to new_entities with a short context note. Use kebab-case for proposed IDs.
+5. Workstreams + systems: only include if the transcript directly discusses them.
+6. commitments: extract liberally — every "I'll send X", "can you do Y by Friday", "we'll follow up on Z" counts. Each entry: {who: id-or-firstname, what: short action, to: id-or-name optional, due: date or phrase optional}.
+7. If two canonical IDs could plausibly match the same mention (50/50 ambiguity), add to clarifications_needed with the options. Do NOT add low-confidence best-inference cases — only genuine ambiguity.
+8. summary: one sentence, ≤ 120 chars, for a Telegram reply.
+
+# Output (JSON object, no other text)
+
+{
+  "attendees": ["id1", "id2"],
+  "people": ["id1", "id2", ...],
+  "workstreams": ["ws-id"],
+  "systems": ["sys-id"],
+  "commitments": [{"who":"id","what":"...","to":"id","due":"..."}],
+  "related_docs": [],
+  "new_entities": {
+    "people": [{"id":"new-person-kebab","context":"one-line"}],
+    "systems": []
+  },
+  "clarifications_needed": [
+    {"question":"Dan = dan-hudson or dan-cook?","options":["dan-hudson","dan-cook"]}
+  ],
+  "summary": "Josh + Jen discussed X; 3 commitments."
+}`;
+
+  let response;
+  try {
+    response = await anthropicPost({
+      model: anthropicModel(),
+      max_tokens: 4096,
+      system,
+      messages: [
+        {
+          role: "user",
+          content: `Catalogue this transcript:\n\n${body}`,
+        },
+      ],
+    });
+  } catch (err) {
+    throw new Error(formatAxiosError(err, "Anthropic Claude (catalogue)"));
+  }
+
+  const block = response.data?.content?.[0];
+  if (!block || block.type !== "text" || !block.text) {
+    throw new Error("Claude catalogue: no text block in response");
+  }
+  const raw = block.text.trim().replace(/^```json\n?/, "").replace(/\n?```$/, "").trim();
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    console.error("catalogueTranscript: failed to parse JSON:\n", raw);
+    throw new Error("Claude returned non-JSON catalogue response");
+  }
+
+  // Normalize defensively
+  return {
+    attendees: Array.isArray(parsed.attendees) ? parsed.attendees : [],
+    people: Array.isArray(parsed.people) ? parsed.people : [],
+    workstreams: Array.isArray(parsed.workstreams) ? parsed.workstreams : [],
+    systems: Array.isArray(parsed.systems) ? parsed.systems : [],
+    commitments: Array.isArray(parsed.commitments) ? parsed.commitments : [],
+    related_docs: Array.isArray(parsed.related_docs) ? parsed.related_docs : [],
+    new_entities: parsed.new_entities && typeof parsed.new_entities === "object"
+      ? { people: parsed.new_entities.people || [], systems: parsed.new_entities.systems || [] }
+      : { people: [], systems: [] },
+    clarifications_needed: Array.isArray(parsed.clarifications_needed)
+      ? parsed.clarifications_needed
+      : [],
+    summary: typeof parsed.summary === "string" ? parsed.summary : "",
+  };
+}
+
 module.exports = {
   analyzeMeeting,
   findPotentialTaskDuplicates,
+  catalogueTranscript,
   prioritizeTodayFocus,
   answerAskAboutTasks,
   answerUnifiedQuery,

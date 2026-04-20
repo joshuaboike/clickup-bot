@@ -20,6 +20,8 @@ const {
   handleMeeting,
   handleDuplicateDecision,
   cancelDuplicateReview,
+  handleAPSClarificationReply,
+  cancelAPSClarification,
 } = require("./handlers/meeting");
 const { handleTask } = require("./handlers/task");
 const { handleSandboxBulkDelete } = require("./handlers/sandboxDelete");
@@ -182,6 +184,11 @@ async function handleTelegramMessage(message) {
   const consumedByDuplicateReview = await handleDuplicateDecision(chatId, text);
   if (consumedByDuplicateReview) return;
 
+  // APS catalogue clarification Q&A (routed before normal parsing).
+  // Only engages if a catalogue session is active for this chatId.
+  const consumedByAPSClarification = await handleAPSClarificationReply(chatId, text);
+  if (consumedByAPSClarification) return;
+
   if (text === "/done") {
     const flushMeeting = (payload) => {
       const transcript = payload.parts.join("\n\n").trim();
@@ -237,6 +244,10 @@ async function handleTelegramMessage(message) {
   if (text === "/cancel") {
     if (cancelDuplicateReview(chatId)) {
       await sendMessage(`Duplicate review cancelled. No meeting tasks were created from that review.`);
+      return;
+    }
+    if (cancelAPSClarification(chatId)) {
+      await sendMessage(`APS catalogue clarification cancelled. Transcript was not archived to GitHub.`);
       return;
     }
     if (meetingBuffer.get(chatId)) {
