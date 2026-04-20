@@ -110,6 +110,23 @@ APS
 
 ---
 
+## APS transcript ingestion (additive)
+
+When `spaceName === "APS"`, after the normal ClickUp flow completes (doc + tasks + duplicate review if any), the bot **additionally**:
+
+1. Fetches `views/entity-index.json` from the `aps-master` repo via GitHub API (falls back to tree-scan if missing)
+2. Calls Claude `catalogueTranscript()` to extract structured frontmatter:
+   - `attendees`, `people`, `workstreams`, `systems` → matched to canonical entity IDs
+   - `commitments` → structured `{who, what, to, due}` entries
+   - New entities (not yet in the index) proposed with `confidence: low`
+3. If Claude flags genuinely ambiguous identity matches → **Telegram clarification Q&A** (one question at a time; reply with a number or `skip`)
+4. Writes `transcripts/<YYYY-MM-DD-slug>.md` to aps-master via Contents API
+5. Telegram reply: `📚 APS transcript archived + catalogued. Attendees: X. Workstreams: Y. Commitments: N. <github URL>`
+
+Clarification questions arrive **only after** the ClickUp flow's final `✅` message, so the conversation stays un-jangled. Cancel any active clarification session with `/cancel`.
+
+**Required env:** `GITHUB_TOKEN` (PAT with repo:contents:write on aps-master), `GITHUB_REPO`, `GITHUB_BRANCH`.
+
 ## What happens with a meeting
 
 1. Claude analyzes the transcript → extracts summary + structured todos
